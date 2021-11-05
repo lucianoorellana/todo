@@ -1,141 +1,127 @@
 package main
 
 import (
-	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"os"
-	"sort"
 	"strconv"
-	"strings"
 )
 
-const DEFAULT_FILE = "/default"
+const DEFAULT_FILE = "default.json"
 const DEFAULT_FOLDER = "/.todo/"
 
 func getHomeDir() string {
-	file, err := os.Getwd()
+	path, err := os.UserHomeDir()
 	if err == nil {
-		return file
+		return path
 	}
-	return file
+	return path
 }
 
-func main() {
-	add, rem, file := setFlags()
-	file_type, err := getFile(file)
-	if err == nil {
-		if add != "\n" {
-			fmt.Println("add item")
-			addItem(add, file_type)
-		}
-		if rem != 0 {
-			fmt.Println("flag")
-			map_of_items := fileToMap(file_type)
-			file_type.Close()
-			file_type, err := os.OpenFile(getHomeDir()+DEFAULT_FOLDER+file, os.O_RDWR|os.O_TRUNC, 0755)
-			if err == nil {
-				fmt.Println(map_of_items)
-				delete(map_of_items, rem)
-				fmt.Println(map_of_items)
-				mapToFile(file_type, map_of_items)
-			}
-			file_type.Close()
-		}
-	}
+type Task struct {
+	ID       int
+	Priority int
+	Item     string
+	Error    string
 }
 
-func fileToMap(file_handle *os.File) map[int]string {
-	list := make(map[int]string)
-	fileScanner := bufio.NewScanner(file_handle)
-	for fileScanner.Scan() {
-		line := fileScanner.Text()
-		tokens := strings.Fields(line)
-		index, err := strconv.Atoi(tokens[0])
-		if err == nil {
-			size := len(tokens) - 1
-			item := tokens[1 : size+1]
-			list[index] = strings.Join(item, " ")
-		}
-	}
-	return list
+type Tasks []Task
+
+func getTask() Task {
+	add := flag.String("a", " ", "Add task to list")
+	remove := flag.Int("r", 0, "Remove task from list")
+	priority := flag.Int("p", 0, "Specify priority for task")
+	flag.Parse()
+	return Task{ID: *remove, Priority: *priority, Item: *add}
 }
 
-func mapToFile(file_handle *os.File, list map[int]string) {
-	keys := make([]int, len(list))
-	i := 0
-	for key := range list {
-		keys[i] = key
-		i++
-	}
-	new_keys := sort.IntSlice(keys)
-	fmt.Println(keys)
-	for _, key := range new_keys {
-		fmt.Println(key)
-		item_to_write := strconv.Itoa(key) + " " + list[key] + "\n"
-		fmt.Println(item_to_write)
-		bytes, err := file_handle.Write([]byte(item_to_write))
-		if err == nil && bytes > 0 {
-			continue
-		}
-	}
-}
-
-func getFile(file string) (*os.File, error) {
-	path := getHomeDir()
-	path = path + DEFAULT_FOLDER
+func getJsonFile() (*os.File, error) {
+	path := getHomeDir() + DEFAULT_FOLDER
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		os.Mkdir(path, 0755)
 	}
-	if file == DEFAULT_FILE {
-		var file_env = os.Getenv("DEFAULT_FILE")
-		if file_env == "" {
-			os.Setenv("DEFAULT_FILE", DEFAULT_FILE)
-			file_env = DEFAULT_FILE
-		}
-		file = file_env
+	return os.OpenFile(path+DEFAULT_FILE, os.O_RDWR|os.O_CREATE, 0755)
+
+}
+
+func writeJson(json []byte, filename string) {
+	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_TRUNC, 0755)
+	bytes, err := file.Write(json)
+	if err != nil {
+		fmt.Println(err)
 	}
-	return os.OpenFile(path+file, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0755)
-}
-
-func setFlags() (string, int, string) {
-	add := flag.String("a", "\n", "Add item to list")
-	rem := flag.Int("r", 0, "Remove item from list")
-	file := flag.String("f", DEFAULT_FILE, "File to write to")
-	default_file := flag.String("d", "no default", "Make default file")
-	flag.Parse()
-	fmt.Println(*add)
-	return *add, *rem, *file, *default_file
-}
-
-func getLineNumber(file *os.File) int {
-	fileInfo, err := file.Stat()
-	line := 1
-	if err == nil {
-		if fileInfo.Size() == 0 {
-			return line
-		} else {
-			fileScanner := bufio.NewScanner(file)
-			for fileScanner.Scan() {
-				line += 1
-			}
-		}
-	} else {
-		return 0
-	}
-	return line
-}
-
-func addItem(item string, file *os.File) {
-	line_number := getLineNumber(file)
-	if line_number == 0 {
+	if bytes > 0 {
 		return
 	}
-	item = strconv.Itoa(line_number) + " " + item
-	bytes_to_write := []byte(item + "\n")
-	bytes, err := file.Write(bytes_to_write)
-	if err == nil {
-		fmt.Printf("Bytes written: %d\n", bytes)
+}
+
+func unmarshalJsonfile(jsonFile *os.File) Tasks {
+	var tasks []Task
+	bytes, _ := ioutil.ReadAll(jsonFile)
+	if len(bytes) == 0 {
+		return tasks
 	}
-	defer file.Close()
+	if err := json.Unmarshal(bytes, &tasks); err != nil {
+		panic(err)
+	}
+	jsonFile.Close()
+	return tasks
+}
+
+func marshalJson(ts Tasks) []byte {
+	bytes, _ := json.Marshal(ts)
+	return bytes
+}
+
+func displayTodo(tasks []Task) {
+	toWrite := ""
+	for _, task := range tasks {
+		toWrite = toWrite + strconv.Itoa(task.ID) + ". " + task.Item + "\n"
+	}
+	os.Stdout.Write([]byte(toWrite))
+}
+
+type Actions interface {
+	remove(task Task)
+	add(task Task)
+}
+
+func (ts *Tasks) add(t Task) {
+	size := len(*ts)
+	t.ID = size + 1
+	*ts = append(*ts, t)
+}
+func (ts *Tasks) remove(id int) {
+	id = id - 1
+	var tsNew Tasks
+	for index, task := range *ts {
+		if index < id {
+			tsNew = append(tsNew, task)
+		} else if index == id {
+			continue
+		} else {
+			tsNew = append(tsNew, Task{ID: (task.ID - 1), Priority: task.Priority, Item: task.Item, Error: task.Error})
+		}
+	}
+	*ts = tsNew
+}
+
+func main() {
+	var task = getTask()
+	file, err := getJsonFile()
+	if err != nil {
+		return
+	}
+	tasks := unmarshalJsonfile(file)
+	if task.ID == 0 {
+		tasks.add(task)
+	} else {
+		tasks.remove(task.ID)
+	}
+	displayTodo(tasks)
+	json_format := marshalJson(tasks)
+	writeJson(json_format, getHomeDir()+DEFAULT_FOLDER+DEFAULT_FILE)
+
 }
