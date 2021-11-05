@@ -1,1 +1,3 @@
 todo [-a | --add] "item"
+todo [-r | --remove] index 
+

@@ -34,7 +34,10 @@ func getTask() Task {
 	remove := flag.Int("r", 0, "Remove task from list")
 	priority := flag.Int("p", 0, "Specify priority for task")
 	flag.Parse()
-	return Task{ID: *remove, Priority: *priority, Item: *add}
+	if *add == " " && *remove == 0 && *priority == 0 {
+		return Task{Error: "No args"}
+	}
+	return Task{ID: *remove, Priority: *priority, Item: *add, Error: ""}
 }
 
 func getJsonFile() (*os.File, error) {
@@ -115,6 +118,10 @@ func main() {
 		return
 	}
 	tasks := unmarshalJsonfile(file)
+	if task.Error == "No args" {
+		displayTodo(tasks)
+		return
+	}
 	if task.ID == 0 {
 		tasks.add(task)
 	} else {
